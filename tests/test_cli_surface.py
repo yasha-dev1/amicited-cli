@@ -90,14 +90,33 @@ def test_rewrite_help_exposes_semantic_model_configuration() -> None:
     assert "--base-url" in output
     assert "--temperature" in output
     assert "--cli-timeout" in output
-    assert "--max-chunk-words" in output
-    assert "--max-concurrency" in output
-    assert "--lexical-diversity" in output
-    assert "--order-diversity" in output
     assert "--output" in output
     assert "-o" in output
     assert "--overwrite" in output
     assert "--include-conte" in output
+
+
+def test_rewrite_accepts_chunking_and_diversity_options() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "watermark",
+            "rewrite",
+            "-",
+            "--max-chunk-words",
+            "90",
+            "--max-concurrency",
+            "2",
+            "--lexical-diversity",
+            "80",
+            "--order-diversity",
+            "20",
+        ],
+        input="A short passage.",
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["operation"] == "rewrite"
 
 
 def test_skills_help_exposes_provider_and_safe_update_options() -> None:
