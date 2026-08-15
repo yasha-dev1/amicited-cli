@@ -1,4 +1,59 @@
-# AmICited
+<p align="center">
+  <a href="https://www.amicited.com/">
+    <img src="https://static.amicited.com/images/social-share.jpg" alt="AmICited — grow your brand on AI search" width="100%">
+  </a>
+</p>
+
+<h1 align="center">AmICited CLI</h1>
+
+<p align="center">
+  <strong>Inspect, clean, verify, and safely rewrite AI-assisted text before you publish it.</strong>
+</p>
+
+<p align="center">
+  <a href="https://www.amicited.com/"><img src="https://img.shields.io/badge/AmICited-AI_Search_Visibility-3b5cff" alt="AmICited website"></a>
+  <a href="https://github.com/yasha-dev1/amicited-cli/actions/workflows/ci.yml"><img src="https://github.com/yasha-dev1/amicited-cli/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.11+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-0d1220" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <a href="https://www.amicited.com/"><strong>Explore AmICited</strong></a>
+  ·
+  <a href="https://www.amicited.com/features/">AI visibility features</a>
+  ·
+  <a href="https://www.amicited.com/blog/">AI search insights</a>
+</p>
+
+AmICited CLI is the open-source, text-only watermark toolkit from
+[AmICited](https://www.amicited.com/), the AI-search visibility platform by
+[FlowHunt](https://www.flowhunt.io/). It helps content teams and AI agents find
+deterministic artifacts, produce reviewable rewrites, preserve important spans,
+and record exactly what changed.
+
+Use it to improve the technical hygiene and human review of AI-assisted content
+before it enters your publishing workflow. Removing hidden characters or
+rewriting text can reduce specific detectable artifacts, but it does **not**
+guarantee evasion of Google or another proprietary system, human authorship, or
+higher search rankings. Strong search performance still depends on useful,
+original, accurate, and authoritative content.
+
+> **Want to know whether AI search cites your brand?**
+> [Run your visibility check with AmICited →](https://www.amicited.com/)
+
+## What it does
+
+- **Inspects locally by default** for hidden Unicode, bidi controls, Unicode
+  tags, exotic spaces, confusables, normalization differences, and suspicious
+  whitespace.
+- **Removes deterministic artifacts safely** while preserving the original,
+  line endings, Markdown structure, and a complete change record.
+- **Creates protected rewrites** through an API model, Codex CLI, or Claude CLI
+  while protecting citations, URLs, quotations, numbers, frontmatter, and code.
+- **Verifies before and after** using detector-specific statuses instead of a
+  manufactured global confidence score.
+- **Works for people and agents** through versioned JSON, a Python SDK, and the
+  bundled `amicited-watermarks` skill.
 
 ## Install
 
@@ -19,16 +74,31 @@ uvx amicited watermark capabilities
 Upgrade later with `uv tool upgrade amicited`. AmICited requires Python 3.11 or
 newer; uv can provision a compatible interpreter automatically.
 
+## Quick start
+
+```bash
+# Inspect without changing the source
+amicited watermark inspect article.md > article-inspection.json
+
+# Produce article_dewatermarked.md and a structured report
+amicited watermark rewrite article.md > article-rewrite-report.json
+
+# Use an existing authenticated Codex session for semantic rewriting
+amicited watermark rewrite article.md --provider codex > article-rewrite-report.json
+
+# Verify the transformed file against supported deterministic signals
+amicited watermark verify article_dewatermarked.md
+```
+
 ## Agent skill
 
-Install the bundled agent skill without cloning the repository:
+Install the bundled skill globally without cloning this repository:
 
 ```bash
 amicited watermark skills
 ```
 
-Choose Codex or Claude when prompted. The same command can be used without a
-prompt in automation:
+Choose Codex or Claude when prompted, or select one directly:
 
 ```bash
 amicited watermark skills --provider codex
@@ -38,30 +108,24 @@ amicited watermark skills --provider claude
 Codex installs globally at `~/.agents/skills/amicited-watermarks`; Claude Code
 installs globally at `~/.claude/skills/amicited-watermarks`. Running the command
 again is safe when the bundled and installed copies match. If an existing copy
-differs, AmICited refuses to replace it. Use `--force` to update only when
-intended; the previous copy is retained in a timestamped sibling backup.
+differs, AmICited refuses to replace it. Use `--force` to preserve the old copy
+as a timestamped backup and install the bundled version.
 
-The package includes the
+The
 [`amicited-watermarks`](https://github.com/yasha-dev1/amicited-cli/tree/main/skills/amicited-watermarks)
-skill. It teaches an agent to inspect before rewriting, preserve the source,
-request confirmation before external model processing, verify transformed text,
-and interpret detector statuses without overstating the result. It also requires
-agents to put articles and other long text in UTF-8 `.md` or `.txt` files and
-pass only the file path to the CLI. Restart the agent if a newly created
-top-level skills directory is not detected. Invoke the skill as
+skill teaches agents to use file-first input, inspect before rewriting, preserve
+the source, request confirmation before external processing, and interpret
+verification without overstating the result. Invoke it as
 `$amicited-watermarks` in Codex or `/amicited-watermarks` in Claude Code.
 
-AmICited's open-source command-line interface and Python SDK. The current
-implementation is text-only and local by default. Semantic rewriting sends text
-to an external model only when a model is explicitly selected.
+## Watermarking and AI visibility
 
-Version 1 is scoped to the `amicited watermark` namespace and the
-`amicited.watermark` SDK module. Its first implementation detects and
-deterministically inspects and sanitizes hidden Unicode characters,
-bidirectional controls, Unicode tags, exotic spaces, potential confusables,
-normalization differences, and suspicious whitespace patterns. These checks do
-not detect statistical or provider-private watermarks and do not establish
-whether text is human-authored.
+This repository owns AmICited's open-source watermarking layer: preparing and
+auditing text before publication. The [AmICited platform](https://www.amicited.com/)
+owns the measurement loop after publication—tracking brand mentions, citations,
+competitor visibility, and source performance across leading AI search engines.
+Together they support a practical workflow: publish cleaner, reviewed content,
+then measure whether AI systems discover and cite it.
 
 ## CLI
 
@@ -209,6 +273,23 @@ result is always `unverifiable`: paraphrasing is not a statistical-watermark
 detector, does not prove removal, and does not establish human authorship. The
 selected model and provider, external-processing flag, protected-span status,
 meaning risk, changes, and limitations are present in the structured report.
+
+## Contributors
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/yasha-dev1">
+        <img src="https://avatars.githubusercontent.com/u/58387199?v=4" width="96" alt="Yasha Boroumand"><br>
+        <sub><strong>Yasha Boroumand</strong></sub>
+      </a><br>
+      <sub>Creator and maintainer</sub>
+    </td>
+  </tr>
+</table>
+
+Community contributions are welcome. See everyone who has helped on the
+[GitHub contributors page](https://github.com/yasha-dev1/amicited-cli/graphs/contributors).
 
 ## Development
 
