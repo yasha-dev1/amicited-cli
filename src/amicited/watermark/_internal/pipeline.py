@@ -25,6 +25,7 @@ from amicited.watermark.models import (
     LayerInspectionResult,
     LayerRewriteResult,
     LayerVerificationResult,
+    RiskLevel,
     TextFinding,
     TransformationReport,
     VerificationReport,
@@ -232,6 +233,19 @@ class TextWatermarkPipeline:
                     model=getattr(layer, "model", None),
                     provider=getattr(layer, "provider", None),
                     execution_provider=getattr(layer, "execution_provider", None),
+                    protected_spans_preserved=(
+                        False if isinstance(error, ProtectedSpanError) else None
+                    ),
+                    protected_span_diagnostics=(
+                        error.diagnostics
+                        if isinstance(error, ProtectedSpanError)
+                        else None
+                    ),
+                    meaning_risk=(
+                        RiskLevel.MEDIUM
+                        if getattr(layer, "id", "") == "semantic_rewrite"
+                        else None
+                    ),
                     error_category=(
                         getattr(error, "category", None)
                         if safe_error

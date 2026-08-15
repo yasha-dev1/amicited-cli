@@ -60,18 +60,48 @@ def _serialize(value: object) -> object:
     return value
 
 
+_TRANSFORMATION_CONTENT_FIELDS = {
+    "after",
+    "before",
+    "context",
+    "text",
+    "transformed_text",
+}
+
+
+def _redact_transformation_content(value: object) -> None:
+    """Remove content-bearing values from a serialized transformation report."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in _TRANSFORMATION_CONTENT_FIELDS:
+                value[key] = None
+            else:
+                _redact_transformation_content(item)
+    elif isinstance(value, list):
+        for item in value:
+            _redact_transformation_content(item)
+
+
 class Serializable:
     """JSON serialization shared by every public result model."""
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self, *, include_content: bool = False) -> dict[str, object]:
         """Return a JSON-compatible dictionary."""
         value = _serialize(self)
         return cast(dict[str, object], value)
 
-    def to_json(self, *, indent: int | None = 2) -> str:
+    def to_json(
+        self,
+        *,
+        indent: int | None = 2,
+        include_content: bool = False,
+    ) -> str:
         """Return stable UTF-8 JSON without terminal styling."""
         return json.dumps(
-            self.to_dict(), ensure_ascii=False, indent=indent, sort_keys=True
+            self.to_dict(include_content=include_content),
+            ensure_ascii=False,
+            indent=indent,
+            sort_keys=True,
         )
 
 
@@ -155,6 +185,20 @@ class LayerVerificationResult(Serializable):
 
 
 @dataclass(frozen=True, slots=True)
+class ProtectedSpanDiagnostics(Serializable):
+    """Content-free diagnostics for an invalid semantic rewrite response."""
+
+    expected_count: int
+    found_count: int
+    first_mismatch_index: int | None
+    missing_ids: tuple[str, ...]
+    duplicate_ids: tuple[str, ...]
+    unexpected_ids: tuple[str, ...]
+    reordered: bool
+    malformed_placeholder_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class LayerRewriteResult(Serializable):
     """Output and changes returned by one transformation layer."""
 
@@ -168,6 +212,7 @@ class LayerRewriteResult(Serializable):
     provider: str | None = None
     execution_provider: str | None = None
     protected_spans_preserved: bool | None = None
+    protected_span_diagnostics: ProtectedSpanDiagnostics | None = None
     meaning_risk: RiskLevel | None = None
     error_category: str | None = None
     warnings: tuple[str, ...] = ()
@@ -252,6 +297,18 @@ class TransformationReport(Serializable):
     output: OutputSummary | None = None
     warnings: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
+    content_included: bool = False
+
+    def to_dict(self, *, include_content: bool = False) -> dict[str, object]:
+        """Serialize with article content redacted unless explicitly requested."""
+        value = Serializable.to_dict(self, include_content=include_content)
+        value["content_included"] = include_content
+        input_summary = value.get("input")
+        if isinstance(input_summary, dict):
+            input_summary["content_included"] = include_content
+        if not include_content:
+            _redact_transformation_content(value)
+        return value
 
 
 @dataclass(frozen=True, slots=True)

@@ -92,6 +92,7 @@ def test_rewrite_help_exposes_semantic_model_configuration() -> None:
     assert "--output" in output
     assert "-o" in output
     assert "--overwrite" in output
+    assert "--include-conte" in output
 
 
 def test_skills_help_exposes_provider_and_safe_update_options() -> None:

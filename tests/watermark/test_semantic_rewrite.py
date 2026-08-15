@@ -13,6 +13,7 @@ from amicited.errors import (
     MissingModelCredentialError,
     ModelCLIUnavailableError,
     ModelConfigurationError,
+    ProtectedSpanError,
 )
 from amicited.watermark.layers import (
     SemanticProvider,
@@ -163,8 +164,17 @@ def test_semantic_layer_rejects_a_response_that_drops_protected_spans() -> None:
         chat_model=DropsProtectedSpan(),
     )
 
-    with pytest.raises(ValueError, match="protected spans"):
+    with pytest.raises(ProtectedSpanError, match="protected spans") as error:
         layer.rewrite("Read https://example.com and keep 42.")
+
+    assert error.value.diagnostics.expected_count == 2
+    assert error.value.diagnostics.found_count == 0
+    assert error.value.diagnostics.first_mismatch_index == 0
+    assert error.value.diagnostics.missing_ids == ("0000", "0001")
+    assert error.value.diagnostics.duplicate_ids == ()
+    assert error.value.diagnostics.unexpected_ids == ()
+    assert error.value.diagnostics.reordered is False
+    assert error.value.diagnostics.malformed_placeholder_count == 0
 
 
 def test_semantic_layer_rejects_reordered_protected_spans() -> None:
@@ -179,8 +189,132 @@ def test_semantic_layer_rejects_reordered_protected_spans() -> None:
         chat_model=ReordersProtectedSpans(),
     )
 
-    with pytest.raises(ValueError, match="protected spans"):
+    with pytest.raises(ProtectedSpanError, match="protected spans") as error:
         layer.rewrite("Read https://example.com before 42.")
+
+    assert error.value.diagnostics.expected_count == 2
+    assert error.value.diagnostics.found_count == 2
+    assert error.value.diagnostics.first_mismatch_index == 0
+    assert error.value.diagnostics.missing_ids == ()
+    assert error.value.diagnostics.duplicate_ids == ()
+    assert error.value.diagnostics.unexpected_ids == ()
+    assert error.value.diagnostics.reordered is True
+    assert error.value.diagnostics.malformed_placeholder_count == 0
+
+
+@pytest.mark.parametrize(
+    ("response", "duplicate_ids", "unexpected_ids", "malformed_count"),
+    [
+        (
+            "__AMICITED_PROTECTED_0000__ "
+            "__AMICITED_PROTECTED_0000__ "
+            "__AMICITED_PROTECTED_0001__",
+            ("0000",),
+            (),
+            0,
+        ),
+        (
+            "__AMICITED_PROTECTED_0000__ "
+            "__AMICITED_PROTECTED_9999__ "
+            "__AMICITED_PROTECTED_0001__",
+            (),
+            ("9999",),
+            0,
+        ),
+        (
+            "__AMICITED_PROTECTED_0000__ "
+            "__AMICITED_PROTECTED_00X1__",
+            (),
+            (),
+            1,
+        ),
+    ],
+)
+def test_semantic_layer_reports_sanitized_placeholder_mismatch_details(
+    response: str,
+    duplicate_ids: tuple[str, ...],
+    unexpected_ids: tuple[str, ...],
+    malformed_count: int,
+) -> None:
+    class InvalidProtectedSpans:
+        def invoke(self, messages: object) -> FakeMessage:
+            return FakeMessage(response)
+
+    layer = SemanticRewriteLayer(
+        model="openai:test-model",
+        chat_model=InvalidProtectedSpans(),
+    )
+
+    with pytest.raises(ProtectedSpanError) as error:
+        layer.rewrite("Read https://example.com before 42.")
+
+    diagnostics = error.value.diagnostics
+    assert diagnostics.expected_count == 2
+    assert diagnostics.duplicate_ids == duplicate_ids
+    assert diagnostics.unexpected_ids == unexpected_ids
+    assert diagnostics.malformed_placeholder_count == malformed_count
+    assert "https://example.com" not in str(error.value)
+
+
+def test_protected_span_failure_is_fail_closed_and_content_safe_by_default() -> None:
+    sentinel = "SENTINEL-private-article-body"
+
+    class DropsLastProtectedSpan:
+        def invoke(self, messages: object) -> FakeMessage:
+            return FakeMessage(
+                f"{sentinel} rewritten __AMICITED_PROTECTED_0000__"
+            )
+
+    sdk = watermark.Watermark(
+        layers=(
+            SemanticRewriteLayer(
+                model="openai:test-model",
+                chat_model=DropsLastProtectedSpan(),
+            ),
+        )
+    )
+    original = f"{sentinel} https://example.com 42"
+
+    report = sdk.rewrite(watermark.WatermarkInput.text(original))
+
+    assert report.transformation_status == "failed"
+    assert report.changed is False
+    assert report.transformed_text == original
+    assert report.results[0].protected_spans_preserved is False
+    assert report.results[0].protected_span_diagnostics is not None
+    assert report.results[0].protected_span_diagnostics.missing_ids == ("0001",)
+
+    serialized = report.to_json()
+    payload = json.loads(serialized)
+    assert sentinel not in serialized
+    assert payload["content_included"] is False
+    assert payload["input"]["content_included"] is False
+    assert payload["transformed_text"] is None
+    assert all(result["text"] is None for result in payload["results"])
+
+    included = report.to_dict(include_content=True)
+    assert included["content_included"] is True
+    assert included["input"]["content_included"] is True
+    assert included["transformed_text"] == original
+
+
+def test_large_markdown_prompt_declares_and_preserves_all_protected_spans() -> None:
+    fake = FakeChatModel(replacement=("Original prose", "Rewritten prose"))
+    layer = SemanticRewriteLayer(
+        model="openai:test-model",
+        chat_model=fake,
+    )
+    original = "\n".join(
+        f"## Section\n\nOriginal prose with value {index}."
+        for index in range(100)
+    )
+
+    result = layer.rewrite(original)
+
+    assert result.protected_spans_preserved is True
+    assert result.text.count("Rewritten prose") == 100
+    assert result.text.count("value") == 100
+    assert "exactly 100 protected placeholders" in str(fake.requests[0])
 
 
 @pytest.mark.parametrize(
@@ -278,7 +412,7 @@ def test_cli_provider_fails_before_reading_input_when_binary_is_missing(
     assert str(missing_input) not in str(error.value)
 
 
-def test_codex_cli_provider_uses_ephemeral_read_only_stdin_and_final_output(
+def test_codex_cli_provider_uses_isolated_file_handoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[list[str], str, str]] = []
@@ -290,11 +424,16 @@ def test_codex_cli_provider_uses_ephemeral_read_only_stdin_and_final_output(
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         prompt = kwargs["input"]
         calls.append((command, prompt, kwargs["cwd"]))
-        output_path = Path(command[command.index("--output-last-message") + 1])
-        protected_text = prompt.split("<TEXT>\n", 1)[1].rsplit("\n</TEXT>", 1)[0]
-        output_path.write_text(
+        workspace = Path(kwargs["cwd"])
+        protected_text = (workspace / "amicited-protected-input.md").read_text(
+            encoding="utf-8"
+        )
+        (workspace / "amicited-rewritten-output.md").write_text(
             protected_text.replace("Original sentence.", "Codex rewrite."),
             encoding="utf-8",
+        )
+        Path(command[command.index("--output-last-message") + 1]).write_text(
+            "Rewrite file created.", encoding="utf-8"
         )
         return subprocess.CompletedProcess(command, 0, stdout="progress", stderr="")
 
@@ -312,16 +451,18 @@ def test_codex_cli_provider_uses_ephemeral_read_only_stdin_and_final_output(
     command, prompt, cwd = calls[0]
     assert command[:2] == ["/test/bin/codex", "exec"]
     assert "--ephemeral" in command
-    assert command[command.index("--sandbox") + 1] == "read-only"
+    assert command[command.index("--sandbox") + 1] == "workspace-write"
     assert "--skip-git-repo-check" in command
     assert command[command.index("--model") + 1] == "gpt-test"
     assert command[-1] == "-"
-    assert "Original sentence." in prompt
+    assert "amicited-protected-input.md" in prompt
+    assert "amicited-rewritten-output.md" in prompt
+    assert "Original sentence." not in prompt
     assert "Original sentence." not in command
     assert Path(cwd).is_absolute()
 
 
-def test_claude_cli_provider_disables_tools_and_session_persistence(
+def test_claude_cli_provider_uses_restricted_file_handoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[list[str], str, str]] = []
@@ -333,12 +474,20 @@ def test_claude_cli_provider_disables_tools_and_session_persistence(
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         prompt = kwargs["input"]
         calls.append((command, prompt, kwargs["cwd"]))
-        protected_text = prompt.split("<TEXT>\n", 1)[1].rsplit("\n</TEXT>", 1)[0]
-        output = protected_text.replace("Original sentence.", "Claude rewrite.")
+        workspace = Path(kwargs["cwd"])
+        protected_text = (workspace / "amicited-protected-input.md").read_text(
+            encoding="utf-8"
+        )
+        (workspace / "amicited-rewritten-output.md").write_text(
+            protected_text.replace("Original sentence.", "Claude rewrite."),
+            encoding="utf-8",
+        )
         return subprocess.CompletedProcess(
             command,
             0,
-            stdout=json.dumps({"type": "result", "is_error": False, "result": output}),
+            stdout=json.dumps(
+                {"type": "result", "is_error": False, "result": "File written."}
+            ),
             stderr="",
         )
 
@@ -358,9 +507,12 @@ def test_claude_cli_provider_disables_tools_and_session_persistence(
     assert "--safe-mode" in command
     assert "--no-session-persistence" in command
     assert command[command.index("--output-format") + 1] == "json"
-    assert command[command.index("--tools") + 1] == ""
+    assert command[command.index("--tools") + 1] == "Read,Write"
+    assert command[command.index("--allowedTools") + 1] == "Read,Write"
     assert command[command.index("--model") + 1] == "sonnet"
-    assert "Original sentence." in prompt
+    assert "amicited-protected-input.md" in prompt
+    assert "amicited-rewritten-output.md" in prompt
+    assert "Original sentence." not in prompt
     assert "Original sentence." not in command
     assert Path(cwd).is_absolute()
 
@@ -470,12 +622,18 @@ def test_cli_provider_empty_output_is_a_failure(
     )
 
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        workspace = Path(kwargs["cwd"])
+        (workspace / "amicited-rewritten-output.md").write_text("", encoding="utf-8")
         if provider is SemanticProvider.CODEX:
-            output_path = Path(command[command.index("--output-last-message") + 1])
-            output_path.write_text("", encoding="utf-8")
+            message_path = Path(
+                command[command.index("--output-last-message") + 1]
+            )
+            message_path.write_text("File written.", encoding="utf-8")
             output = ""
         else:
-            output = json.dumps({"type": "result", "is_error": False, "result": ""})
+            output = json.dumps(
+                {"type": "result", "is_error": False, "result": "File written."}
+            )
         return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
 
     monkeypatch.setattr("amicited.watermark.layers.semantic.subprocess.run", run)
@@ -488,6 +646,38 @@ def test_cli_provider_empty_output_is_a_failure(
     assert report.transformation_status == "failed"
     assert report.results[-1].error_category == "empty_output"
     assert report.transformed_text == "private input"
+
+
+@pytest.mark.parametrize("provider", (SemanticProvider.CODEX, SemanticProvider.CLAUDE))
+def test_cli_provider_missing_rewrite_file_is_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: SemanticProvider,
+) -> None:
+    monkeypatch.setattr(
+        "amicited.watermark.layers.semantic.shutil.which",
+        lambda name: f"/test/bin/{provider.value}",
+    )
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if provider is SemanticProvider.CODEX:
+            output = ""
+        else:
+            output = json.dumps(
+                {"type": "result", "is_error": False, "result": "File written."}
+            )
+        return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr("amicited.watermark.layers.semantic.subprocess.run", run)
+
+    report = watermark.rewrite(
+        watermark.WatermarkInput.text("private input"),
+        provider=provider,
+    )
+
+    assert report.transformation_status == "failed"
+    assert report.results[-1].error_category == "invalid_output"
+    assert "required rewrite output file" in report.results[-1].errors[0]
+    assert "private input" not in report.to_json()
 
 
 def test_claude_cli_malformed_json_is_a_failure(

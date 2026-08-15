@@ -165,10 +165,14 @@ amicited watermark rewrite article.txt --provider claude
 amicited watermark rewrite article.txt --provider claude --model sonnet
 ```
 
-Codex runs non-interactively in an empty temporary directory with a read-only
-sandbox and an ephemeral session. Claude runs in safe mode with tools disabled
-and session persistence disabled. Input is sent over standard input rather than
-command-line arguments. Temporary output is removed after the operation.
+Codex and Claude run non-interactively in an isolated temporary workspace.
+AmICited writes the protected source to `amicited-protected-input.md`, sends the
+agent a short instruction containing filenames rather than the article body,
+and requires `amicited-rewritten-output.md`. Codex uses an ephemeral
+`workspace-write` sandbox. Claude uses safe mode, no session persistence, and
+only its built-in `Read` and `Write` tools. AmICited reads and validates the
+required output file, then removes the entire temporary workspace. The original
+source path is never exposed to the agent and remains unchanged.
 
 Codex and Claude activity is streamed live to standard error by default, while
 the final AmICited JSON report is written to standard output. This keeps report
@@ -177,6 +181,16 @@ redirection machine-readable without hiding provider progress:
 ```bash
 amicited watermark rewrite article.txt --provider codex > report.json
 # Writes article_dewatermarked.txt and records it in report.json.
+```
+
+Transformation reports exclude source text, transformed text, diff bodies, and
+finding context by default. The report contains `"content_included": false`,
+checksums, output paths, statuses, and diagnostics without copying a private
+article into JSON. Use `--include-content` only when a trusted consumer needs
+the text embedded in the report:
+
+```bash
+amicited watermark rewrite article.txt --include-content > report-with-text.json
 ```
 
 Provider output can include the submitted prompt. Use `--no-stream` when the
@@ -222,6 +236,8 @@ from amicited import watermark
 report = watermark.rewrite(watermark.WatermarkInput.text("hello\u200bworld"))
 print(report.transformed_text)
 print(report.to_json())
+# Explicit opt-in when serialized JSON must contain text and diff bodies:
+print(report.to_json(include_content=True))
 
 semantic_report = watermark.rewrite(
     watermark.WatermarkInput.text("Text to rewrite."),
@@ -234,6 +250,12 @@ codex_report = watermark.rewrite(
     progress_callback=lambda text: print(text, end=""),
 )
 ```
+
+Python report objects retain `transformed_text` in memory. Their `to_dict()` and
+`to_json()` methods redact content by default. Protected-span failures expose
+content-free diagnostics such as expected/found counts, missing, duplicate or
+unexpected placeholder IDs, the first mismatch, reordering, and malformed-token
+counts. A failed rewrite never creates the adjacent output candidate.
 
 The SDK does not stream unless `progress_callback` is supplied.
 

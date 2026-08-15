@@ -1,5 +1,12 @@
 """Public exception hierarchy for AmICited."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from amicited.watermark.models import ProtectedSpanDiagnostics
+
 
 class AmICitedError(Exception):
     """Base class for errors raised by the AmICited SDK."""
@@ -87,8 +94,14 @@ class ProtectedSpanError(ValueError):
 
     category = "protected_span_violation"
 
-    def __init__(self, message: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostics: ProtectedSpanDiagnostics | None = None,
+    ) -> None:
         self.public_message = message
+        self.diagnostics = diagnostics
         super().__init__(message)
 
 

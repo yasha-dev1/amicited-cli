@@ -33,7 +33,10 @@ preflight layers, not a substitute for a provider-backed rewrite.
    pipelines. Prefer file paths even then when later inspection, rewriting, or
    verification will reuse the content.
 4. Keep JSON reports in separate files and never confuse a report path with the
-   article path.
+   article path. Transformation JSON excludes article and diff bodies by default;
+   read the adjacent transformed file when reviewing content. Do not add
+   `--include-content` unless the user explicitly needs content duplicated into
+   a trusted report destination.
 
 Use concrete file commands such as:
 
@@ -94,7 +97,10 @@ Every rewrite above preserves `article.md` and creates
    API mode requires the provider credential in the environment. Never request,
    print, log, or place an API key in a command, prompt, or report. Codex and
    Claude progress is on stderr and can echo submitted text; add `--no-stream`
-   when terminal output may be retained.
+   when terminal output may be retained. For Codex and Claude, AmICited uses an
+   isolated temporary file handoff; the agent prompt contains temporary
+   filenames rather than the complete article. API mode still transmits content
+   directly to the selected remote endpoint.
 5. Let the CLI choose its safe adjacent output path by omitting `--output`:
    `article.md` becomes `article_dewatermarked.md` and `article.txt` becomes
    `article_dewatermarked.txt`. The JSON redirection stores the report separately
@@ -150,4 +156,7 @@ unrelated detector scores into a global confidence score.
   removal without disclosure and permission.
 - Never transmit content merely because a model provider is configured.
 - Stop after a failed or protected-span-violating transformation; preserve the
-  current source and report the structured error category.
+  current source and report the structured error category. For
+  `protected_span_violation`, report the content-free expected/found counts,
+  first mismatch, missing/duplicate/unexpected IDs, reordering state, and
+  malformed-placeholder count. Do not expose the protected values.

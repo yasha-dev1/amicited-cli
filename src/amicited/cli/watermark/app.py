@@ -38,7 +38,11 @@ def _input(value: str) -> watermark.WatermarkInput:
     return watermark.WatermarkInput.file(value)
 
 
-def _run(operation: Callable[[], object]) -> None:
+def _run(
+    operation: Callable[[], object],
+    *,
+    include_content: bool = False,
+) -> None:
     try:
         result = operation()
     except WatermarkInputError as error:
@@ -51,7 +55,7 @@ def _run(operation: Callable[[], object]) -> None:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=CONFIGURATION_ERROR_EXIT_CODE) from error
     if isinstance(result, Serializable):
-        typer.echo(result.to_json())
+        typer.echo(result.to_json(include_content=include_content))
         if (
             isinstance(result, watermark.TransformationReport)
             and result.transformation_status == "failed"
@@ -165,6 +169,7 @@ def _run_transformation(
     input_value: str,
     output: Path | None,
     overwrite: bool,
+    include_content: bool,
 ) -> None:
     def transform_and_write() -> watermark.TransformationReport:
         destination = _output_path(input_value, output)
@@ -183,7 +188,7 @@ def _run_transformation(
             overwrite=overwrite,
         )
 
-    _run(transform_and_write)
+    _run(transform_and_write, include_content=include_content)
 
 
 def _deterministic_options(
@@ -290,6 +295,11 @@ def remove_command(
         "--overwrite",
         help="Explicitly replace an existing output file.",
     ),
+    include_content: bool = typer.Option(
+        False,
+        "--include-content",
+        help="Include source and transformed content in the JSON report.",
+    ),
 ) -> None:
     """Apply selected removal strategies to a copy of INPUT."""
     options = _deterministic_options(
@@ -312,6 +322,7 @@ def remove_command(
         input_value=input_value,
         output=output,
         overwrite=overwrite,
+        include_content=include_content,
     )
 
 
@@ -380,6 +391,11 @@ def rewrite_command(
         "--overwrite",
         help="Explicitly replace an existing output file.",
     ),
+    include_content: bool = typer.Option(
+        False,
+        "--include-content",
+        help="Include source and transformed content in the JSON report.",
+    ),
 ) -> None:
     """Produce a reviewable rewrite candidate for INPUT."""
     options = _deterministic_options(
@@ -402,6 +418,7 @@ def rewrite_command(
         input_value=input_value,
         output=output,
         overwrite=overwrite,
+        include_content=include_content,
     )
 
 

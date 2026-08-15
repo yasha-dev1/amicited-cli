@@ -132,7 +132,15 @@ def test_stdin_inspect_verify_and_rewrite_work_end_to_end() -> None:
     verification = parse_report(
         run_cli("watermark", "verify", "-", input_text=original)
     )
-    rewrite = parse_report(run_cli("watermark", "rewrite", "-", input_text=original))
+    rewrite = parse_report(
+        run_cli(
+            "watermark",
+            "rewrite",
+            "-",
+            "--include-content",
+            input_text=original,
+        )
+    )
 
     assert inspection["operation"] == "inspect"
     assert [result["layer_id"] for result in inspection["results"]] == [
@@ -172,7 +180,14 @@ def test_file_transformation_preserves_the_source_end_to_end(
     original = b"---\r\ntitle: Test\r\n---\r\na\xe2\x80\x8bb\xc2\xa0c\r\n"
     source.write_bytes(original)
 
-    report = parse_report(run_cli("watermark", operation, str(source)))
+    report = parse_report(
+        run_cli(
+            "watermark",
+            operation,
+            str(source),
+            "--include-content",
+        )
+    )
 
     destination = tmp_path / "article_dewatermarked.md"
     assert report["operation"] == operation
@@ -328,6 +343,7 @@ def test_explicit_deterministic_cleanup_options_work_end_to_end() -> None:
             "--no-normalize-spaces",
             "--normalization",
             "nfkc",
+            "--include-content",
             input_text=original,
         )
     )
@@ -432,6 +448,7 @@ def test_semantic_rewrite_uses_selected_model_through_langchain_end_to_end() -> 
                 "openai:test-model",
                 "--base-url",
                 f"http://127.0.0.1:{server.server_port}/v1",
+                "--include-content",
                 input_text="The original sentence is predictable.",
                 env=environment,
             )
@@ -482,11 +499,14 @@ def _write_fake_model_cli(
         provider_body = (
             "output = text.replace('Original sentence.', "
             f"'{provider.title()} rewrite.')\n"
+            "pathlib.Path('amicited-rewritten-output.md').write_text(\n"
+            "    output, encoding='utf-8'\n"
+            ")\n"
             "if name == 'codex':\n"
             "    sys.stderr.write('Codex is rewriting...\\n')\n"
             "    sys.stderr.flush()\n"
             "    destination = pathlib.Path(args[args.index('--output-last-message') + 1])\n"
-            "    destination.write_text(output, encoding='utf-8')\n"
+            "    destination.write_text('Rewrite file created.', encoding='utf-8')\n"
             "else:\n"
             "    if args[args.index('--output-format') + 1] == 'stream-json':\n"
             "        sys.stdout.write(json.dumps({\n"
@@ -497,7 +517,8 @@ def _write_fake_model_cli(
             "        }) + '\\n')\n"
             "        sys.stdout.flush()\n"
             "    sys.stdout.write(json.dumps({\n"
-            "        'type': 'result', 'is_error': False, 'result': output\n"
+            "        'type': 'result', 'is_error': False, "
+            "'result': 'Rewrite file created.'\n"
             "    }) + '\\n')\n"
             "    sys.stdout.flush()\n"
         )
@@ -511,11 +532,116 @@ def _write_fake_model_cli(
         "name = pathlib.Path(sys.argv[0]).name\n"
         "args = sys.argv[1:]\n"
         "prompt = sys.stdin.read()\n"
-        "text = prompt.split('<TEXT>\\n', 1)[1].rsplit('\\n</TEXT>', 1)[0]\n"
+        "text = pathlib.Path('amicited-protected-input.md').read_text(encoding='utf-8')\n"
+        "if 'Original sentence.' in prompt:\n"
+        "    raise SystemExit('content leaked into prompt')\n"
         f"{provider_body}",
         encoding="utf-8",
     )
     executable.chmod(0o755)
+
+
+def test_long_markdown_placeholder_failure_is_actionable_private_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "codex"
+    executable.write_text(
+        "#!/usr/bin/python3\n"
+        "import pathlib\n"
+        "import sys\n"
+        "args = sys.argv[1:]\n"
+        "prompt = sys.stdin.read()\n"
+        "if 'PRIVATE-SENTINEL-ARTICLE-CONTENT' in prompt:\n"
+        "    raise SystemExit('content leaked into prompt')\n"
+        "pathlib.Path('amicited-rewritten-output.md').write_text("
+        "'Incomplete rewrite __AMICITED_PROTECTED_0000__', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{tmp_path}:{environment['PATH']}"
+    sentinel = "PRIVATE-SENTINEL-ARTICLE-CONTENT"
+    source = tmp_path / "large-article.md"
+    original = "---\ntitle: Private draft\n---\n\n" + "\n\n".join(
+        (
+            f"## Section\n\n{sentinel} paragraph with protected value {index}. "
+            + "Long-form prose for a realistic article workload. " * 3
+        )
+        for index in range(100)
+    )
+    assert 20_000 <= len(original) <= 30_000
+    source.write_text(original, encoding="utf-8")
+
+    result = run_cli(
+        "watermark",
+        "rewrite",
+        str(source),
+        "--provider",
+        "codex",
+        "--no-stream",
+        env=environment,
+    )
+
+    assert result.returncode == 4
+    assert result.stderr == ""
+    assert sentinel not in result.stdout
+    assert len(result.stdout.encode("utf-8")) < 50_000
+    report = json.loads(result.stdout)
+    semantic = report["results"][-1]
+    diagnostics = semantic["protected_span_diagnostics"]
+    assert report["transformation_status"] == "failed"
+    assert report["changed"] is False
+    assert report["content_included"] is False
+    assert report["transformed_text"] is None
+    assert all(layer["text"] is None for layer in report["results"])
+    assert semantic["protected_spans_preserved"] is False
+    assert semantic["error_category"] == "protected_span_violation"
+    assert diagnostics["expected_count"] >= 100
+    assert diagnostics["found_count"] == 1
+    assert diagnostics["first_mismatch_index"] == 1
+    assert diagnostics["missing_ids"][0] == "0001"
+    assert source.read_text(encoding="utf-8") == original
+    assert not (tmp_path / "large-article_dewatermarked.md").exists()
+
+
+def test_long_markdown_codex_file_handoff_preserves_all_placeholders(
+    tmp_path: Path,
+) -> None:
+    _write_fake_model_cli(tmp_path, "codex", failure=None)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{tmp_path}:{environment['PATH']}"
+    source = tmp_path / "large-success.md"
+    original = "\n\n".join(
+        (
+            f"## Section\n\nOriginal sentence. Protected value {index}. "
+            + "Long-form Markdown prose stays outside the command prompt. " * 3
+        )
+        for index in range(100)
+    )
+    assert 20_000 <= len(original) <= 30_000
+    source.write_text(original, encoding="utf-8")
+
+    result = run_cli(
+        "watermark",
+        "rewrite",
+        str(source),
+        "--provider",
+        "codex",
+        "--no-stream",
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    destination = tmp_path / "large-success_dewatermarked.md"
+    rewritten = destination.read_text(encoding="utf-8")
+    assert rewritten.count("Codex rewrite.") == 100
+    assert all(f"Protected value {index}." in rewritten for index in range(100))
+    assert source.read_text(encoding="utf-8") == original
+    assert report["content_included"] is False
+    assert report["transformed_text"] is None
+    assert report["results"][-1]["protected_spans_preserved"] is True
+    assert report["results"][-1]["protected_span_diagnostics"] is None
 
 
 @pytest.mark.parametrize("provider", ("codex", "claude"))
@@ -533,6 +659,7 @@ def test_model_cli_success_works_through_real_subprocess_end_to_end(
         "-",
         "--provider",
         provider,
+        "--include-content",
         input_text="Original sentence.",
         env=environment,
     )
@@ -563,6 +690,7 @@ def test_model_cli_stream_can_be_disabled_end_to_end(
         "--provider",
         provider,
         "--no-stream",
+        "--include-content",
         input_text="Original sentence.",
         env=environment,
     )
