@@ -1,13 +1,15 @@
 ---
 name: amicited-watermarks
-description: Inspect, sanitize, verify, and produce reviewable text rewrites with the AmICited Watermark CLI using file-first inputs for articles and other long text. Use when an agent is asked to find hidden Unicode or text watermark signals, remove deterministic text artifacts, rewrite text through an explicitly approved model provider, or interpret an AmICited JSON report. Do not use for media watermarks, AI-authorship classification, undisclosed attribution removal, or claims of universal/provider-specific watermark removal.
+description: Inspect, sanitize, verify, and semantically rewrite articles and other long text with the AmICited Watermark CLI using file-first inputs and an explicitly selected API, Codex, or Claude provider. Use when an agent is asked to find hidden Unicode or text watermark signals, remove deterministic text artifacts, produce a reviewable dewatermarked rewrite, or interpret an AmICited JSON report. For article rewriting, treat deterministic inspection as a preflight and semantic rewriting as the expected outcome unless the user explicitly requests local deterministic cleanup only. Do not use for media watermarks, AI-authorship classification, undisclosed attribution removal, or claims of universal/provider-specific watermark removal.
 ---
 
 # AmICited Watermarks
 
 Use the `amicited watermark` CLI as a text-only, evidence-limited workflow. Treat
 every semantic rewrite as potentially lossy and every detector verdict as scoped
-to the detector that produced it.
+to the detector that produced it. Semantic rewriting is the expected default for
+articles and long-form content; deterministic inspection and sanitation are
+preflight layers, not a substitute for a provider-backed rewrite.
 
 ## Establish capabilities
 
@@ -37,9 +39,32 @@ Use concrete file commands such as:
 
 ```bash
 amicited watermark inspect article.md > article-inspection.json
-amicited watermark rewrite article.md > article-rewrite-report.json
+amicited watermark rewrite article.md --provider codex > article-rewrite-report.json
 amicited watermark verify article_dewatermarked.md > article-verification.json
 ```
+
+Every rewrite above preserves `article.md` and creates
+`article_dewatermarked.md` beside it. A `.txt` input likewise creates
+`NAME_dewatermarked.txt`. The original `article.md` remains unchanged.
+
+## Select a semantic provider
+
+1. Require an explicit provider for an article rewrite. If the user already
+   selected `codex`, `claude`, or `api`, use it. Otherwise, ask the user to
+   choose `codex`, `claude`, or `api` before rewriting.
+2. When operating inside Codex, recommend `codex`; when operating inside Claude
+   Code, recommend `claude`. Still identify that provider and obtain user
+   confirmation before sending the file content.
+3. For `codex` or `claude`, a model is optional and the authenticated CLI
+   default may be used. For `api`, require `--model PROVIDER:MODEL` and its
+   environment credential.
+4. Never run `amicited watermark rewrite ARTICLE` without an explicit
+   `--provider` as the final article rewrite. The CLI default (`api` with no
+   model) runs deterministic layers only and does not perform semantic rewriting.
+5. Do not treat a no-change deterministic report as completion. Complete the
+   confirmed provider-backed rewrite, or clearly report that it was not run
+   because the user requested deterministic-only processing, declined external
+   processing, or no provider was available.
 
 ## Follow the safe workflow
 
@@ -54,18 +79,9 @@ amicited watermark verify article_dewatermarked.md > article-verification.json
 
 3. Read the structured JSON. Report which signal types and layers were tested,
    their findings, and every `unsupported`, `unverifiable`, `not_configured`, or
-   `failed` result.
-4. For deterministic sanitation only, omit `--model` and use:
-
-   ```bash
-   amicited watermark rewrite article.md > article-rewrite-report.json
-   ```
-
-   A file input automatically produces `NAME_dewatermarked.md` or
-   `NAME_dewatermarked.txt`. Use `-o CANDIDATE` for a different reviewable
-   destination. Treat that separate candidate as the preview; inspect its diff
-   before accepting it.
-5. Before semantic rewriting, explain that content will leave the deterministic
+   `failed` result. Continue to semantic rewriting even when deterministic
+   inspection finds nothing; that is a normal outcome.
+4. Before semantic rewriting, explain that content will leave the deterministic
    local workflow, identify the selected destination/provider, and obtain user
    confirmation. Then choose exactly one explicitly approved backend:
 
@@ -79,6 +95,11 @@ amicited watermark verify article_dewatermarked.md > article-verification.json
    print, log, or place an API key in a command, prompt, or report. Codex and
    Claude progress is on stderr and can echo submitted text; add `--no-stream`
    when terminal output may be retained.
+5. Let the CLI choose its safe adjacent output path by omitting `--output`:
+   `article.md` becomes `article_dewatermarked.md` and `article.txt` becomes
+   `article_dewatermarked.txt`. The JSON redirection stores the report separately
+   and does not redirect the rewritten article. Never pass `--overwrite` for the
+   source file.
 6. Review the candidate against the source. Confirm that citations, URLs, direct
    quotations, numbers, named entities, Markdown, frontmatter, and code remain
    correct. Report protected-span violations, formatting changes, and possible
@@ -92,6 +113,16 @@ amicited watermark verify article_dewatermarked.md > article-verification.json
 8. Summarize the transformation separately from verification. Include the
    output path, checksum, executed strategies, changes, warnings, limitations,
    before/after detector states, and any unverified signal classes.
+
+Use deterministic-only rewriting solely when the user explicitly requests a
+local cleanup or declines all semantic providers:
+
+```bash
+amicited watermark rewrite article.md > article-rewrite-report.json
+```
+
+Label this result deterministic-only and do not present it as the requested
+semantic rewrite.
 
 ## Interpret statuses exactly
 
