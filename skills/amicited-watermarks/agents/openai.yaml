@@ -1,0 +1,4 @@
+interface:
+  display_name: "AmICited Watermarks"
+  short_description: "Inspect and safely rewrite text files"
+  default_prompt: "Use $amicited-watermarks to inspect my article file and produce a safe, reviewable rewrite."
