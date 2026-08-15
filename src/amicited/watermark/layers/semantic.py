@@ -247,10 +247,7 @@ def _restore(text: str, protected: tuple[tuple[str, str], ...]) -> str:
             missing_ids=missing,
             duplicate_ids=duplicates,
             unexpected_ids=unexpected,
-            reordered=(
-                expected_counts == found_counts
-                and found != expected
-            ),
+            reordered=(expected_counts == found_counts and found != expected),
             malformed_placeholder_count=malformed_count,
         )
         mismatch = (
@@ -401,9 +398,7 @@ class LangChainAPIBackend(SemanticRewriteBackend):
         protected_count: int,
         progress_callback: ProgressCallback | None = None,
     ) -> str:
-        return _response_text(
-            self._model().invoke(_api_prompt(text, protected_count))
-        )
+        return _response_text(self._model().invoke(_api_prompt(text, protected_count)))
 
 
 class ModelCLIBackend(SemanticRewriteBackend):

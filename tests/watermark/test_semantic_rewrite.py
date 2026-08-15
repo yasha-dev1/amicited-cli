@@ -222,8 +222,7 @@ def test_semantic_layer_rejects_reordered_protected_spans() -> None:
             0,
         ),
         (
-            "__AMICITED_PROTECTED_0000__ "
-            "__AMICITED_PROTECTED_00X1__",
+            "__AMICITED_PROTECTED_0000__ __AMICITED_PROTECTED_00X1__",
             (),
             (),
             1,
@@ -261,9 +260,7 @@ def test_protected_span_failure_is_fail_closed_and_content_safe_by_default() -> 
 
     class DropsLastProtectedSpan:
         def invoke(self, messages: object) -> FakeMessage:
-            return FakeMessage(
-                f"{sentinel} rewritten __AMICITED_PROTECTED_0000__"
-            )
+            return FakeMessage(f"{sentinel} rewritten __AMICITED_PROTECTED_0000__")
 
     sdk = watermark.Watermark(
         layers=(
@@ -305,8 +302,7 @@ def test_large_markdown_prompt_declares_and_preserves_all_protected_spans() -> N
         chat_model=fake,
     )
     original = "\n".join(
-        f"## Section\n\nOriginal prose with value {index}."
-        for index in range(100)
+        f"## Section\n\nOriginal prose with value {index}." for index in range(100)
     )
 
     result = layer.rewrite(original)
@@ -625,9 +621,7 @@ def test_cli_provider_empty_output_is_a_failure(
         workspace = Path(kwargs["cwd"])
         (workspace / "amicited-rewritten-output.md").write_text("", encoding="utf-8")
         if provider is SemanticProvider.CODEX:
-            message_path = Path(
-                command[command.index("--output-last-message") + 1]
-            )
+            message_path = Path(command[command.index("--output-last-message") + 1])
             message_path.write_text("File written.", encoding="utf-8")
             output = ""
         else:
