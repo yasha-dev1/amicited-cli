@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -36,12 +38,11 @@ class FakeChatModel:
     def invoke(self, messages: object) -> FakeMessage:
         self.requests.append(messages)
         prompt = str(messages)
-        if self.replacement is None:
-            return FakeMessage(prompt)
-        before, after = self.replacement
-        assert before in prompt
         protected_text = prompt[prompt.index("<TEXT>\n") + len("<TEXT>\n") :]
         protected_text = protected_text[: protected_text.index("\n</TEXT>")]
+        if self.replacement is None:
+            return FakeMessage(protected_text)
+        before, after = self.replacement
         return FakeMessage(protected_text.replace(before, after))
 
 
@@ -310,7 +311,81 @@ def test_large_markdown_prompt_declares_and_preserves_all_protected_spans() -> N
     assert result.protected_spans_preserved is True
     assert result.text.count("Rewritten prose") == 100
     assert result.text.count("value") == 100
-    assert "exactly 100 protected placeholders" in str(fake.requests[0])
+    assert result.chunk_count == len(fake.requests)
+    assert result.chunk_count is not None and result.chunk_count > 1
+    assert all(len(_prompt_text(request).split()) <= 180 for request in fake.requests)
+
+
+def _prompt_text(request: object) -> str:
+    prompt = str(request)
+    protected_text = prompt[prompt.index("<TEXT>\n") + len("<TEXT>\n") :]
+    return protected_text[: protected_text.index("\n</TEXT>")]
+
+
+def test_paragraph_chunks_run_concurrently_and_reassemble_in_source_order() -> None:
+    class ConcurrentModel:
+        def __init__(self) -> None:
+            self.active = 0
+            self.maximum_active = 0
+            self.lock = threading.Lock()
+            self.requests: list[object] = []
+
+        def invoke(self, request: object) -> FakeMessage:
+            with self.lock:
+                self.requests.append(request)
+                self.active += 1
+                self.maximum_active = max(self.maximum_active, self.active)
+            try:
+                time.sleep(0.03)
+                return FakeMessage(
+                    _prompt_text(request).replace("Original", "Rewritten")
+                )
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    model = ConcurrentModel()
+    layer = SemanticRewriteLayer(
+        model="openai:test-model",
+        chat_model=model,
+        max_chunk_words=8,
+        max_concurrency=4,
+        lexical_diversity=80,
+        order_diversity=60,
+    )
+    original = "\n\n".join(
+        f"Original paragraph {index} keeps its position." for index in range(8)
+    )
+
+    result = layer.rewrite(original)
+
+    assert model.maximum_active >= 2
+    assert result.chunk_count == 8
+    assert result.max_chunk_words == 8
+    assert result.max_concurrency == 4
+    assert result.lexical_diversity == 80
+    assert result.order_diversity == 60
+    assert result.text == original.replace("Original", "Rewritten")
+    assert all(len(_prompt_text(request).split()) <= 8 for request in model.requests)
+    assert all("Target lexical diversity: 80/100" in str(r) for r in model.requests)
+    assert all("Target order diversity: 60/100" in str(r) for r in model.requests)
+
+
+def test_protected_only_blocks_are_not_sent_to_the_provider() -> None:
+    model = FakeChatModel()
+    layer = SemanticRewriteLayer(
+        model="openai:test-model",
+        chat_model=model,
+    )
+    original = "---\ntitle: Draft 2026\n---\n\n```python\nanswer = 42\n```\n"
+
+    result = layer.rewrite(original)
+
+    assert result.text == original
+    assert result.chunk_count == 0
+    assert result.external_processing is False
+    assert model.requests == []
+    assert "not transmitted" in result.warnings[0]
 
 
 @pytest.mark.parametrize(
@@ -358,16 +433,47 @@ def test_langchain_model_receives_public_configuration_only(
         model="test-model",
         model_provider="openai",
         base_url="https://models.example/v1",
+        temperature=0.25,
+        max_chunk_words=90,
+        max_concurrency=2,
+        lexical_diversity=80,
+        order_diversity=20,
     )
 
     assert report.transformed_text == "Rewritten."
     assert captured == {
         "model": "test-model",
         "model_provider": "openai",
-        "temperature": 0.7,
+        "temperature": 0.25,
         "base_url": "https://models.example/v1",
     }
+    assert report.results[-1].max_chunk_words == 90
+    assert report.results[-1].max_concurrency == 2
+    assert report.results[-1].lexical_diversity == 80
+    assert report.results[-1].order_diversity == 20
+    assert "Target lexical diversity: 80/100" in str(fake.requests[0])
+    assert "Target order diversity: 20/100" in str(fake.requests[0])
     assert "secret-key" not in report.to_json()
+
+
+@pytest.mark.parametrize(
+    ("argument", "value", "error"),
+    [
+        ("max_chunk_words", 0, "positive"),
+        ("max_concurrency", 33, "between 1 and 32"),
+        ("lexical_diversity", 101, "between 0 and 100"),
+        ("order_diversity", -1, "between 0 and 100"),
+    ],
+)
+def test_semantic_chunk_configuration_is_validated(
+    argument: str, value: int, error: str
+) -> None:
+    with pytest.raises(ModelConfigurationError, match=error):
+        SemanticRewriteLayer(
+            model="openai:test-model",
+            chat_model=FakeChatModel(),
+            **{argument: value},
+        )
 
 
 def test_semantic_provider_options_require_a_model() -> None:
@@ -408,7 +514,7 @@ def test_cli_provider_fails_before_reading_input_when_binary_is_missing(
     assert str(missing_input) not in str(error.value)
 
 
-def test_codex_cli_provider_uses_isolated_file_handoff(
+def test_codex_cli_provider_receives_short_passage_directly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[list[str], str, str]] = []
@@ -420,16 +526,9 @@ def test_codex_cli_provider_uses_isolated_file_handoff(
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         prompt = kwargs["input"]
         calls.append((command, prompt, kwargs["cwd"]))
-        workspace = Path(kwargs["cwd"])
-        protected_text = (workspace / "amicited-protected-input.md").read_text(
-            encoding="utf-8"
-        )
-        (workspace / "amicited-rewritten-output.md").write_text(
-            protected_text.replace("Original sentence.", "Codex rewrite."),
-            encoding="utf-8",
-        )
         Path(command[command.index("--output-last-message") + 1]).write_text(
-            "Rewrite file created.", encoding="utf-8"
+            _prompt_text(prompt).replace("Original sentence.", "Codex rewrite."),
+            encoding="utf-8",
         )
         return subprocess.CompletedProcess(command, 0, stdout="progress", stderr="")
 
@@ -447,18 +546,18 @@ def test_codex_cli_provider_uses_isolated_file_handoff(
     command, prompt, cwd = calls[0]
     assert command[:2] == ["/test/bin/codex", "exec"]
     assert "--ephemeral" in command
-    assert command[command.index("--sandbox") + 1] == "workspace-write"
+    assert command[command.index("--sandbox") + 1] == "read-only"
     assert "--skip-git-repo-check" in command
     assert command[command.index("--model") + 1] == "gpt-test"
     assert command[-1] == "-"
-    assert "amicited-protected-input.md" in prompt
-    assert "amicited-rewritten-output.md" in prompt
-    assert "Original sentence." not in prompt
+    assert "amicited-protected-input.md" not in prompt
+    assert "amicited-rewritten-output.md" not in prompt
+    assert "Original sentence." in prompt
     assert "Original sentence." not in command
     assert Path(cwd).is_absolute()
 
 
-def test_claude_cli_provider_uses_restricted_file_handoff(
+def test_claude_cli_provider_receives_short_passage_directly_without_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[list[str], str, str]] = []
@@ -470,19 +569,14 @@ def test_claude_cli_provider_uses_restricted_file_handoff(
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         prompt = kwargs["input"]
         calls.append((command, prompt, kwargs["cwd"]))
-        workspace = Path(kwargs["cwd"])
-        protected_text = (workspace / "amicited-protected-input.md").read_text(
-            encoding="utf-8"
-        )
-        (workspace / "amicited-rewritten-output.md").write_text(
-            protected_text.replace("Original sentence.", "Claude rewrite."),
-            encoding="utf-8",
+        rewritten = _prompt_text(prompt).replace(
+            "Original sentence.", "Claude rewrite."
         )
         return subprocess.CompletedProcess(
             command,
             0,
             stdout=json.dumps(
-                {"type": "result", "is_error": False, "result": "File written."}
+                {"type": "result", "is_error": False, "result": rewritten}
             ),
             stderr="",
         )
@@ -503,12 +597,12 @@ def test_claude_cli_provider_uses_restricted_file_handoff(
     assert "--safe-mode" in command
     assert "--no-session-persistence" in command
     assert command[command.index("--output-format") + 1] == "json"
-    assert command[command.index("--tools") + 1] == "Read,Write"
-    assert command[command.index("--allowedTools") + 1] == "Read,Write"
+    assert command[command.index("--tools") + 1] == ""
+    assert "--allowedTools" not in command
     assert command[command.index("--model") + 1] == "sonnet"
-    assert "amicited-protected-input.md" in prompt
-    assert "amicited-rewritten-output.md" in prompt
-    assert "Original sentence." not in prompt
+    assert "amicited-protected-input.md" not in prompt
+    assert "amicited-rewritten-output.md" not in prompt
+    assert "Original sentence." in prompt
     assert "Original sentence." not in command
     assert Path(cwd).is_absolute()
 
@@ -618,16 +712,12 @@ def test_cli_provider_empty_output_is_a_failure(
     )
 
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        workspace = Path(kwargs["cwd"])
-        (workspace / "amicited-rewritten-output.md").write_text("", encoding="utf-8")
         if provider is SemanticProvider.CODEX:
             message_path = Path(command[command.index("--output-last-message") + 1])
-            message_path.write_text("File written.", encoding="utf-8")
+            message_path.write_text("", encoding="utf-8")
             output = ""
         else:
-            output = json.dumps(
-                {"type": "result", "is_error": False, "result": "File written."}
-            )
+            output = json.dumps({"type": "result", "is_error": False, "result": ""})
         return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
 
     monkeypatch.setattr("amicited.watermark.layers.semantic.subprocess.run", run)
@@ -643,7 +733,7 @@ def test_cli_provider_empty_output_is_a_failure(
 
 
 @pytest.mark.parametrize("provider", (SemanticProvider.CODEX, SemanticProvider.CLAUDE))
-def test_cli_provider_missing_rewrite_file_is_a_failure(
+def test_cli_provider_missing_response_is_a_failure(
     monkeypatch: pytest.MonkeyPatch,
     provider: SemanticProvider,
 ) -> None:
@@ -656,9 +746,7 @@ def test_cli_provider_missing_rewrite_file_is_a_failure(
         if provider is SemanticProvider.CODEX:
             output = ""
         else:
-            output = json.dumps(
-                {"type": "result", "is_error": False, "result": "File written."}
-            )
+            output = json.dumps({"type": "result", "is_error": False})
         return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
 
     monkeypatch.setattr("amicited.watermark.layers.semantic.subprocess.run", run)
@@ -670,7 +758,7 @@ def test_cli_provider_missing_rewrite_file_is_a_failure(
 
     assert report.transformation_status == "failed"
     assert report.results[-1].error_category == "invalid_output"
-    assert "required rewrite output file" in report.results[-1].errors[0]
+    assert "response" in report.results[-1].errors[0]
     assert "private input" not in report.to_json()
 
 

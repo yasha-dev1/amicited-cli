@@ -499,14 +499,11 @@ def _write_fake_model_cli(
         provider_body = (
             "output = text.replace('Original sentence.', "
             f"'{provider.title()} rewrite.')\n"
-            "pathlib.Path('amicited-rewritten-output.md').write_text(\n"
-            "    output, encoding='utf-8'\n"
-            ")\n"
             "if name == 'codex':\n"
             "    sys.stderr.write('Codex is rewriting...\\n')\n"
             "    sys.stderr.flush()\n"
             "    destination = pathlib.Path(args[args.index('--output-last-message') + 1])\n"
-            "    destination.write_text('Rewrite file created.', encoding='utf-8')\n"
+            "    destination.write_text(output, encoding='utf-8')\n"
             "else:\n"
             "    if args[args.index('--output-format') + 1] == 'stream-json':\n"
             "        sys.stdout.write(json.dumps({\n"
@@ -518,7 +515,7 @@ def _write_fake_model_cli(
             "        sys.stdout.flush()\n"
             "    sys.stdout.write(json.dumps({\n"
             "        'type': 'result', 'is_error': False, "
-            "'result': 'Rewrite file created.'\n"
+            "'result': output\n"
             "    }) + '\\n')\n"
             "    sys.stdout.flush()\n"
         )
@@ -532,9 +529,10 @@ def _write_fake_model_cli(
         "name = pathlib.Path(sys.argv[0]).name\n"
         "args = sys.argv[1:]\n"
         "prompt = sys.stdin.read()\n"
-        "text = pathlib.Path('amicited-protected-input.md').read_text(encoding='utf-8')\n"
-        "if 'Original sentence.' in prompt:\n"
-        "    raise SystemExit('content leaked into prompt')\n"
+        "start = prompt.index('<TEXT>\\n') + len('<TEXT>\\n')\n"
+        "text = prompt[start:prompt.index('\\n</TEXT>', start)]\n"
+        "if 'amicited-protected-input.md' in prompt:\n"
+        "    raise SystemExit('unexpected file handoff')\n"
         f"{provider_body}",
         encoding="utf-8",
     )
@@ -551,9 +549,8 @@ def test_long_markdown_placeholder_failure_is_actionable_private_and_fail_closed
         "import sys\n"
         "args = sys.argv[1:]\n"
         "prompt = sys.stdin.read()\n"
-        "if 'PRIVATE-SENTINEL-ARTICLE-CONTENT' in prompt:\n"
-        "    raise SystemExit('content leaked into prompt')\n"
-        "pathlib.Path('amicited-rewritten-output.md').write_text("
+        "destination = pathlib.Path(args[args.index('--output-last-message') + 1])\n"
+        "destination.write_text("
         "'Incomplete rewrite __AMICITED_PROTECTED_0000__', encoding='utf-8')\n",
         encoding="utf-8",
     )
@@ -597,17 +594,18 @@ def test_long_markdown_placeholder_failure_is_actionable_private_and_fail_closed
     assert semantic["protected_spans_preserved"] is False
     assert semantic["error_category"] == "protected_span_violation"
     assert diagnostics["expected_count"] >= 100
-    assert diagnostics["found_count"] == 1
+    assert diagnostics["found_count"] > 1
     assert diagnostics["first_mismatch_index"] == 1
     assert diagnostics["missing_ids"][0] == "0001"
     assert source.read_text(encoding="utf-8") == original
     assert not (tmp_path / "large-article_dewatermarked.md").exists()
 
 
-def test_long_markdown_codex_file_handoff_preserves_all_placeholders(
-    tmp_path: Path,
+@pytest.mark.parametrize("provider", ("codex", "claude"))
+def test_long_markdown_cli_parallel_passages_preserve_all_placeholders(
+    tmp_path: Path, provider: str
 ) -> None:
-    _write_fake_model_cli(tmp_path, "codex", failure=None)
+    _write_fake_model_cli(tmp_path, provider, failure=None)
     environment = dict(os.environ)
     environment["PATH"] = f"{tmp_path}:{environment['PATH']}"
     source = tmp_path / "large-success.md"
@@ -626,7 +624,7 @@ def test_long_markdown_codex_file_handoff_preserves_all_placeholders(
         "rewrite",
         str(source),
         "--provider",
-        "codex",
+        provider,
         "--no-stream",
         env=environment,
     )
@@ -635,13 +633,17 @@ def test_long_markdown_codex_file_handoff_preserves_all_placeholders(
     report = json.loads(result.stdout)
     destination = tmp_path / "large-success_dewatermarked.md"
     rewritten = destination.read_text(encoding="utf-8")
-    assert rewritten.count("Codex rewrite.") == 100
+    assert rewritten.count(f"{provider.title()} rewrite.") == 100
     assert all(f"Protected value {index}." in rewritten for index in range(100))
     assert source.read_text(encoding="utf-8") == original
     assert report["content_included"] is False
     assert report["transformed_text"] is None
     assert report["results"][-1]["protected_spans_preserved"] is True
     assert report["results"][-1]["protected_span_diagnostics"] is None
+    assert report["results"][-1]["execution_provider"] == provider
+    assert report["results"][-1]["chunk_count"] >= 100
+    assert report["results"][-1]["max_chunk_words"] == 180
+    assert report["results"][-1]["max_concurrency"] == 4
 
 
 @pytest.mark.parametrize("provider", ("codex", "claude"))

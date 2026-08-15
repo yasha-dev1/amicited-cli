@@ -88,7 +88,12 @@ def test_rewrite_help_exposes_semantic_model_configuration() -> None:
     assert "default: api" in output
     assert "--model-provider" in output
     assert "--base-url" in output
+    assert "--temperature" in output
     assert "--cli-timeout" in output
+    assert "--max-chunk-words" in output
+    assert "--max-concurrency" in output
+    assert "--lexical-diversity" in output
+    assert "--order-diversity" in output
     assert "--output" in output
     assert "-o" in output
     assert "--overwrite" in output

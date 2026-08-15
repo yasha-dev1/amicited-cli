@@ -84,7 +84,12 @@ class Watermark:
         model: str | None,
         model_provider: str | None,
         base_url: str | None,
+        temperature: float,
         cli_timeout: float,
+        max_chunk_words: int,
+        max_concurrency: int,
+        lexical_diversity: int,
+        order_diversity: int,
         progress_callback: Callable[[str], None] | None,
     ) -> TextWatermarkPipeline:
         pipeline = self._pipeline_for(options)
@@ -101,7 +106,12 @@ class Watermark:
             execution_provider=provider,
             model_provider=model_provider,
             base_url=base_url,
+            temperature=temperature,
             cli_timeout=cli_timeout,
+            max_chunk_words=max_chunk_words,
+            max_concurrency=max_concurrency,
+            lexical_diversity=lexical_diversity,
+            order_diversity=order_diversity,
             progress_callback=progress_callback,
         )
         semantic_layer.validate_configuration()
@@ -134,7 +144,12 @@ class Watermark:
         model: str | None = None,
         model_provider: str | None = None,
         base_url: str | None = None,
+        temperature: float = 0.7,
         cli_timeout: float = 120.0,
+        max_chunk_words: int = 180,
+        max_concurrency: int = 4,
+        lexical_diversity: int = 60,
+        order_diversity: int = 40,
         progress_callback: Callable[[str], None] | None = None,
     ) -> TransformationReport:
         """Apply selected removal strategies to a copy of the input."""
@@ -144,7 +159,12 @@ class Watermark:
             model=model,
             model_provider=model_provider,
             base_url=base_url,
+            temperature=temperature,
             cli_timeout=cli_timeout,
+            max_chunk_words=max_chunk_words,
+            max_concurrency=max_concurrency,
+            lexical_diversity=lexical_diversity,
+            order_diversity=order_diversity,
             progress_callback=progress_callback,
         ).transform(input_data, operation="remove")
 
@@ -157,7 +177,12 @@ class Watermark:
         model: str | None = None,
         model_provider: str | None = None,
         base_url: str | None = None,
+        temperature: float = 0.7,
         cli_timeout: float = 120.0,
+        max_chunk_words: int = 180,
+        max_concurrency: int = 4,
+        lexical_diversity: int = 60,
+        order_diversity: int = 40,
         progress_callback: Callable[[str], None] | None = None,
     ) -> TransformationReport:
         """Produce a reviewable rewrite candidate."""
@@ -167,7 +192,12 @@ class Watermark:
             model=model,
             model_provider=model_provider,
             base_url=base_url,
+            temperature=temperature,
             cli_timeout=cli_timeout,
+            max_chunk_words=max_chunk_words,
+            max_concurrency=max_concurrency,
+            lexical_diversity=lexical_diversity,
+            order_diversity=order_diversity,
             progress_callback=progress_callback,
         ).transform(input_data, operation="rewrite")
 
@@ -215,7 +245,12 @@ def remove(
     model: str | None = None,
     model_provider: str | None = None,
     base_url: str | None = None,
+    temperature: float = 0.7,
     cli_timeout: float = 120.0,
+    max_chunk_words: int = 180,
+    max_concurrency: int = 4,
+    lexical_diversity: int = 60,
+    order_diversity: int = 40,
     progress_callback: Callable[[str], None] | None = None,
 ) -> TransformationReport:
     """Transform input using the default watermark facade."""
@@ -226,7 +261,12 @@ def remove(
         model=model,
         model_provider=model_provider,
         base_url=base_url,
+        temperature=temperature,
         cli_timeout=cli_timeout,
+        max_chunk_words=max_chunk_words,
+        max_concurrency=max_concurrency,
+        lexical_diversity=lexical_diversity,
+        order_diversity=order_diversity,
         progress_callback=progress_callback,
     )
 
@@ -239,7 +279,12 @@ def rewrite(
     model: str | None = None,
     model_provider: str | None = None,
     base_url: str | None = None,
+    temperature: float = 0.7,
     cli_timeout: float = 120.0,
+    max_chunk_words: int = 180,
+    max_concurrency: int = 4,
+    lexical_diversity: int = 60,
+    order_diversity: int = 40,
     progress_callback: Callable[[str], None] | None = None,
 ) -> TransformationReport:
     """Rewrite input using the default watermark facade."""
@@ -250,7 +295,12 @@ def rewrite(
         model=model,
         model_provider=model_provider,
         base_url=base_url,
+        temperature=temperature,
         cli_timeout=cli_timeout,
+        max_chunk_words=max_chunk_words,
+        max_concurrency=max_concurrency,
+        lexical_diversity=lexical_diversity,
+        order_diversity=order_diversity,
         progress_callback=progress_callback,
     )
 

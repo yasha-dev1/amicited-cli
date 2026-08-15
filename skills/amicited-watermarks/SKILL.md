@@ -97,10 +97,10 @@ Every rewrite above preserves `article.md` and creates
    API mode requires the provider credential in the environment. Never request,
    print, log, or place an API key in a command, prompt, or report. Codex and
    Claude progress is on stderr and can echo submitted text; add `--no-stream`
-   when terminal output may be retained. For Codex and Claude, AmICited uses an
-   isolated temporary file handoff; the agent prompt contains temporary
-   filenames rather than the complete article. API mode still transmits content
-   directly to the selected remote endpoint.
+   when terminal output may be retained. AmICited protects sensitive spans,
+   divides the document into bounded paragraph-level passages, and sends those
+   passages directly to the selected API, Codex, or Claude provider with bounded
+   concurrency. The original source path is not exposed to the provider.
 5. Let the CLI choose its safe adjacent output path by omitting `--output`:
    `article.md` becomes `article_dewatermarked.md` and `article.txt` becomes
    `article_dewatermarked.txt`. The JSON redirection stores the report separately

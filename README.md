@@ -165,14 +165,29 @@ amicited watermark rewrite article.txt --provider claude
 amicited watermark rewrite article.txt --provider claude --model sonnet
 ```
 
-Codex and Claude run non-interactively in an isolated temporary workspace.
-AmICited writes the protected source to `amicited-protected-input.md`, sends the
-agent a short instruction containing filenames rather than the article body,
-and requires `amicited-rewritten-output.md`. Codex uses an ephemeral
-`workspace-write` sandbox. Claude uses safe mode, no session persistence, and
-only its built-in `Read` and `Write` tools. AmICited reads and validates the
-required output file, then removes the entire temporary workspace. The original
-source path is never exposed to the agent and remains unchanged.
+Semantic rewriting is paragraph-oriented. AmICited preserves blank-line
+separators, splits an overlong paragraph at a preferred sentence boundary or a
+hard word limit, rewrites the resulting passages concurrently, and reassembles
+them in source order. Defaults are 180 words per request and four concurrent
+requests. DIPPER-style lexical and order diversity targets are included in every
+provider prompt and can be configured explicitly:
+
+```bash
+amicited watermark rewrite article.txt --provider codex \
+  --max-chunk-words 180 --max-concurrency 4 \
+  --lexical-diversity 60 --order-diversity 40
+```
+
+These diversity values guide a general model through instructions; they are not
+the learned control tokens of the original DIPPER model. `--temperature` sets
+API-provider sampling only. Codex and Claude use their selected CLI model's
+generation settings.
+
+Codex and Claude run non-interactively and receive each bounded protected
+passage directly through standard input. Codex uses an ephemeral `read-only`
+sandbox and a temporary final-response file. Claude uses safe mode, no session
+persistence, and no built-in tools. No original source path is exposed, and the
+source remains unchanged.
 
 Codex and Claude activity is streamed live to standard error by default, while
 the final AmICited JSON report is written to standard output. This keeps report
@@ -242,6 +257,10 @@ print(report.to_json(include_content=True))
 semantic_report = watermark.rewrite(
     watermark.WatermarkInput.text("Text to rewrite."),
     model="openai:gpt-5-mini",
+    max_chunk_words=180,
+    max_concurrency=4,
+    lexical_diversity=60,
+    order_diversity=40,
 )
 
 codex_report = watermark.rewrite(
@@ -275,14 +294,17 @@ The default order is:
 6. `UnicodeNormalizationLayer`
 7. `WhitespacePatternLayer`
 
-When `model` is explicitly supplied to `rewrite` or `remove`, an eighth
-`SemanticRewriteLayer` runs after the deterministic layers. Its `api`, `codex`,
-and `claude` backends implement the same execution interface; the API backend
-uses LangChain's provider-neutral `init_chat_model`. Citations, URLs, quotations,
-numbers, frontmatter, and code are replaced with immutable placeholders before
-the request and restored only if the model returns every placeholder exactly
-once and in order. A provider error or protected-span violation preserves the
-current text and produces a failed transformation.
+When an API `model` is explicitly supplied or the `codex`/`claude` provider is
+selected, an eighth `SemanticRewriteLayer` runs after the deterministic layers.
+Its three backends implement the same execution interface; the API backend uses
+LangChain's provider-neutral `init_chat_model`. The layer protects the complete
+document, partitions it into paragraph-level passages bounded by the word limit,
+and invokes up to `max_concurrency` provider requests in parallel.
+Citations, URLs, quotations, numbers, frontmatter, and code are immutable
+placeholders. Protected-only passages are not transmitted. Restoration succeeds
+only if every placeholder is returned exactly once and in order. A provider
+error or protected-span violation preserves the current text and produces a
+failed transformation.
 
 Context-sensitive joiners, variation selectors, valid emoji tag sequences,
 and balanced bidi controls are reported but preserved. Exotic spaces are mapped
@@ -294,7 +316,8 @@ Semantic rewriting is non-deterministic and potentially lossy. Its verification
 result is always `unverifiable`: paraphrasing is not a statistical-watermark
 detector, does not prove removal, and does not establish human authorship. The
 selected model and provider, external-processing flag, protected-span status,
-meaning risk, changes, and limitations are present in the structured report.
+meaning risk, chunk count, word/concurrency limits, diversity targets, changes,
+and limitations are present in the structured report.
 
 ## Contributors
 

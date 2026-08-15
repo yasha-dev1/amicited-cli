@@ -214,6 +214,11 @@ class LayerRewriteResult(Serializable):
     protected_spans_preserved: bool | None = None
     protected_span_diagnostics: ProtectedSpanDiagnostics | None = None
     meaning_risk: RiskLevel | None = None
+    chunk_count: int | None = None
+    max_chunk_words: int | None = None
+    max_concurrency: int | None = None
+    lexical_diversity: int | None = None
+    order_diversity: int | None = None
     error_category: str | None = None
     warnings: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()

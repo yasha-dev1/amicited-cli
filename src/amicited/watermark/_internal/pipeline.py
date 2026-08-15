@@ -241,6 +241,11 @@ class TextWatermarkPipeline:
                         if isinstance(error, ProtectedSpanError)
                         else None
                     ),
+                    chunk_count=getattr(layer, "chunk_count", None),
+                    max_chunk_words=getattr(layer, "max_chunk_words", None),
+                    max_concurrency=getattr(layer, "max_concurrency", None),
+                    lexical_diversity=getattr(layer, "lexical_diversity", None),
+                    order_diversity=getattr(layer, "order_diversity", None),
                     meaning_risk=(
                         RiskLevel.MEDIUM
                         if getattr(layer, "id", "") == "semantic_rewrite"
