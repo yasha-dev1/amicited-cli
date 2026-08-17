@@ -8,6 +8,7 @@ from amicited.watermark._internal.pipeline import TextWatermarkPipeline
 from amicited.watermark.input import WatermarkInput
 from amicited.watermark.layers import (
     BidiControlLayer,
+    ChatModel,
     ConfusableLayer,
     ExoticSpaceLayer,
     HiddenUnicodeLayer,
@@ -90,6 +91,7 @@ class Watermark:
         max_concurrency: int,
         lexical_diversity: int,
         order_diversity: int,
+        chat_model: ChatModel | None,
         progress_callback: Callable[[str], None] | None,
     ) -> TextWatermarkPipeline:
         pipeline = self._pipeline_for(options)
@@ -99,6 +101,12 @@ class Watermark:
             if model_provider is not None or base_url is not None:
                 raise ModelConfigurationError(
                     "model_provider and base_url require model to be selected."
+                )
+            # Without this the semantic layer would be dropped silently and the
+            # caller's model would never be invoked.
+            if chat_model is not None:
+                raise ModelConfigurationError(
+                    "chat_model requires model to be selected."
                 )
             return pipeline
         semantic_layer = SemanticRewriteLayer(
@@ -112,6 +120,7 @@ class Watermark:
             max_concurrency=max_concurrency,
             lexical_diversity=lexical_diversity,
             order_diversity=order_diversity,
+            chat_model=chat_model,
             progress_callback=progress_callback,
         )
         semantic_layer.validate_configuration()
@@ -150,6 +159,7 @@ class Watermark:
         max_concurrency: int = 4,
         lexical_diversity: int = 60,
         order_diversity: int = 40,
+        chat_model: ChatModel | None = None,
         progress_callback: Callable[[str], None] | None = None,
     ) -> TransformationReport:
         """Apply selected removal strategies to a copy of the input."""
@@ -165,6 +175,7 @@ class Watermark:
             max_concurrency=max_concurrency,
             lexical_diversity=lexical_diversity,
             order_diversity=order_diversity,
+            chat_model=chat_model,
             progress_callback=progress_callback,
         ).transform(input_data, operation="remove")
 
@@ -183,6 +194,7 @@ class Watermark:
         max_concurrency: int = 4,
         lexical_diversity: int = 60,
         order_diversity: int = 40,
+        chat_model: ChatModel | None = None,
         progress_callback: Callable[[str], None] | None = None,
     ) -> TransformationReport:
         """Produce a reviewable rewrite candidate."""
@@ -198,6 +210,7 @@ class Watermark:
             max_concurrency=max_concurrency,
             lexical_diversity=lexical_diversity,
             order_diversity=order_diversity,
+            chat_model=chat_model,
             progress_callback=progress_callback,
         ).transform(input_data, operation="rewrite")
 
@@ -251,6 +264,7 @@ def remove(
     max_concurrency: int = 4,
     lexical_diversity: int = 60,
     order_diversity: int = 40,
+    chat_model: ChatModel | None = None,
     progress_callback: Callable[[str], None] | None = None,
 ) -> TransformationReport:
     """Transform input using the default watermark facade."""
@@ -267,6 +281,7 @@ def remove(
         max_concurrency=max_concurrency,
         lexical_diversity=lexical_diversity,
         order_diversity=order_diversity,
+        chat_model=chat_model,
         progress_callback=progress_callback,
     )
 
@@ -285,6 +300,7 @@ def rewrite(
     max_concurrency: int = 4,
     lexical_diversity: int = 60,
     order_diversity: int = 40,
+    chat_model: ChatModel | None = None,
     progress_callback: Callable[[str], None] | None = None,
 ) -> TransformationReport:
     """Rewrite input using the default watermark facade."""
@@ -301,6 +317,7 @@ def rewrite(
         max_concurrency=max_concurrency,
         lexical_diversity=lexical_diversity,
         order_diversity=order_diversity,
+        chat_model=chat_model,
         progress_callback=progress_callback,
     )
 

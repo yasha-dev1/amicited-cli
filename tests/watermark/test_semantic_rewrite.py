@@ -51,6 +51,10 @@ class FailingChatModel:
         raise RuntimeError("provider leaked secret-token and private input")
 
 
+def _no_model_may_be_built(**kwargs: Any) -> Any:
+    raise AssertionError("a caller-supplied chat model must be used as-is")
+
+
 def test_semantic_layer_implements_the_layer_contract_and_is_unverifiable() -> None:
     layer = SemanticRewriteLayer(
         model="openai:test-model",
@@ -133,6 +137,56 @@ def test_sdk_fails_before_reading_or_sending_content_when_api_key_is_missing(
     assert error.value.provider == "openai"
     assert error.value.environment_variable == "OPENAI_API_KEY"
     assert "private input" not in str(error.value)
+
+
+def test_caller_supplied_chat_model_is_invoked_without_provider_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "amicited.watermark.layers.semantic._init_chat_model",
+        _no_model_may_be_built,
+    )
+    fake = FakeChatModel(
+        replacement=(
+            "The original sentence has a predictable structure.",
+            "A less predictable structure now carries the original point.",
+        )
+    )
+
+    report = watermark.remove(
+        watermark.WatermarkInput.text(
+            "The original sentence has a predictable structure."
+        ),
+        model="openai:test-model",
+        chat_model=fake,
+    )
+
+    assert "A less predictable structure" in report.transformed_text
+    assert report.transformation_status == "completed"
+    assert len(fake.requests) == 1
+
+
+def test_chat_model_without_a_model_is_rejected_rather_than_silently_dropped() -> None:
+    fake = FakeChatModel()
+
+    with pytest.raises(ModelConfigurationError):
+        watermark.remove(
+            watermark.WatermarkInput.text("private input"),
+            chat_model=fake,
+        )
+
+    assert fake.requests == []
+
+
+def test_chat_model_is_rejected_for_the_cli_providers() -> None:
+    with pytest.raises(ModelConfigurationError):
+        watermark.rewrite(
+            watermark.WatermarkInput.text("private input"),
+            provider=SemanticProvider.CLAUDE,
+            model="claude-model",
+            chat_model=FakeChatModel(),
+        )
 
 
 def test_model_failure_is_structured_and_preserves_the_original(
@@ -403,7 +457,11 @@ def test_known_provider_credentials_are_validated(
     environment_variable: str,
 ) -> None:
     monkeypatch.delenv(environment_variable, raising=False)
-    layer = SemanticRewriteLayer(model=model, chat_model=FakeChatModel())
+    monkeypatch.setattr(
+        "amicited.watermark.layers.semantic._init_chat_model",
+        lambda **kwargs: FakeChatModel(),
+    )
+    layer = SemanticRewriteLayer(model=model)
 
     with pytest.raises(MissingModelCredentialError) as error:
         layer.validate_configuration()
