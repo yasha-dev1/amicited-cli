@@ -16,6 +16,7 @@ from amicited.watermark.api import (
 from amicited.watermark.input import InputKind, WatermarkInput
 from amicited.watermark.layers import (
     BidiControlLayer,
+    ChatModel,
     ConfusableLayer,
     ExoticSpaceLayer,
     HiddenUnicodeLayer,
@@ -49,6 +50,7 @@ __all__ = [
     "BidiControlLayer",
     "CapabilitiesReport",
     "CapabilityDeclaration",
+    "ChatModel",
     "ConfusableLayer",
     "DeterministicOptions",
     "ExoticSpaceLayer",

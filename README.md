@@ -270,6 +270,21 @@ codex_report = watermark.rewrite(
 )
 ```
 
+Supply `chat_model` to have the semantic layer call a model you built yourself —
+so its callbacks, client, and credentials are yours, and you can meter the token
+usage of every rewrite call. It is only valid for the API provider, and `model`
+is still required because it names the model in the report:
+
+```python
+from langchain_openai import ChatOpenAI
+
+report = watermark.remove(
+    watermark.WatermarkInput.text("Text to clean."),
+    model="openai:gpt-5-mini",
+    chat_model=ChatOpenAI(model="gpt-5-mini", callbacks=[my_usage_handler]),
+)
+```
+
 Python report objects retain `transformed_text` in memory. Their `to_dict()` and
 `to_json()` methods redact content by default. Protected-span failures expose
 content-free diagnostics such as expected/found counts, missing, duplicate or

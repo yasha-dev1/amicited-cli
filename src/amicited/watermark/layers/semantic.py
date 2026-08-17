@@ -202,15 +202,22 @@ def _outer_whitespace(text: str) -> tuple[str, str, str]:
     return text[:start], text[start:end], text[end:]
 
 
-class _ChatModel(Protocol):
+class ChatModel(Protocol):
+    """A LangChain-compatible chat model the caller may supply themselves.
+
+    Callers who need to observe the rewrite calls — to meter token usage, attach
+    callbacks, or route through their own client — build the model and pass it
+    to the operation instead of letting the layer construct one.
+    """
+
     def invoke(self, input: object) -> object:
         """Invoke a LangChain-compatible chat model."""
 
 
-def _init_chat_model(**kwargs: Any) -> _ChatModel:
+def _init_chat_model(**kwargs: Any) -> ChatModel:
     from langchain.chat_models import init_chat_model
 
-    return cast(_ChatModel, init_chat_model(**kwargs))
+    return cast(ChatModel, init_chat_model(**kwargs))
 
 
 def _provider_for(model: str, model_provider: str | None) -> str:
@@ -406,7 +413,7 @@ class LangChainAPIBackend(SemanticRewriteBackend):
         model_provider: str | None,
         base_url: str | None,
         temperature: float,
-        chat_model: _ChatModel | None,
+        chat_model: ChatModel | None,
     ) -> None:
         if not isinstance(model, str) or not model.strip():
             raise ModelConfigurationError("Model must be a non-empty string.")
@@ -431,9 +438,10 @@ class LangChainAPIBackend(SemanticRewriteBackend):
         self.base_url = base_url
         self.temperature = float(temperature)
         self._chat_model = chat_model
+        self._caller_supplied_model = chat_model is not None
         self._model_lock = threading.Lock()
 
-    def _model(self) -> _ChatModel:
+    def _model(self) -> ChatModel:
         if self._chat_model is not None:
             return self._chat_model
         with self._model_lock:
@@ -454,11 +462,14 @@ class LangChainAPIBackend(SemanticRewriteBackend):
         return self._chat_model
 
     def validate_configuration(self) -> None:
-        environment_variable = _PROVIDER_CREDENTIALS.get(self.provider)
-        if environment_variable is not None and not os.environ.get(
-            environment_variable
-        ):
-            raise MissingModelCredentialError(self.provider, environment_variable)
+        # A caller-supplied model carries its own credentials, so the provider
+        # environment variable says nothing about whether it can be invoked.
+        if not self._caller_supplied_model:
+            environment_variable = _PROVIDER_CREDENTIALS.get(self.provider)
+            if environment_variable is not None and not os.environ.get(
+                environment_variable
+            ):
+                raise MissingModelCredentialError(self.provider, environment_variable)
         self._model()
 
     def invoke(
@@ -865,7 +876,7 @@ class SemanticRewriteLayer(TextWatermarkLayer):
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         lexical_diversity: int = DEFAULT_LEXICAL_DIVERSITY,
         order_diversity: int = DEFAULT_ORDER_DIVERSITY,
-        chat_model: _ChatModel | None = None,
+        chat_model: ChatModel | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         if not isinstance(execution_provider, SemanticProvider):
